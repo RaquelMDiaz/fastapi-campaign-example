@@ -1,72 +1,101 @@
-from fastapi import FastAPI, HTTPException, Request
-from datetime import datetime
+from typing import Annotated
 
-app = FastAPI(root_path="/api/v1")
+from fastapi import FastAPI, HTTPException, Depends
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from pydantic import BaseModel
+from sqlmodel import Field, Session, create_engine, SQLModel, select
+
+class Campaign(SQLModel, table=True):
+    campaign_id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    due_date: datetime | None = Field(default=None, nullable=True, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=True, index=True)
+
+class CampaignCreate(SQLModel):
+    name: str = Field(index=True)
+    due_date: datetime | None = None
+
+sqlite_db = "campaigns.db"
+sqlite_db_url = f"sqlite:///{sqlite_db}"
+connect_args = {"check_same_thread": False}
+engine = create_engine(sqlite_db_url, connect_args=connect_args)
+
+def create_db():
+    with engine.connect() as connection:
+        SQLModel.metadata.create_all(engine)
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_db()
+    with Session(engine) as session:
+            if not session.exec(select(Campaign)).first():
+                session.add_all([
+                    Campaign(name="Campaign 1", due_date=datetime(2026, 5, 30, 13, 31, 44)),
+                    Campaign(name="Campaign 2", due_date=datetime(2026, 5, 30, 13, 31, 44)),
+                    Campaign(name="Campaign 3", due_date=datetime(2026, 5, 30, 13, 31, 44)),
+                ])
+                session.commit()
+    yield
+
+app = FastAPI(root_path="/api/v1", lifespan=lifespan)
 
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
 
-data = [
-    {
-        "campaign_id": 1,
-        "name": "Campaign 1",
-        "due_date": "2026-05-30T13:31:44.064116",
-        "created_at": datetime.now(),
-    },
-    {
-        "campaign_id": 2,
-        "name": "Campaign 2",
-        "due_date": "2026-05-30T13:31:44.064116",
-        "created_at": datetime.now(),
-    },
-    {
-        "campaign_id": 3,
-        "name": "Campaign 3",
-        "due_date": "2026-05-30T13:31:44.064116",
-        "created_at": datetime.now(),
-    }
-]
+class CapaignsResponse(BaseModel):
+    campaigns: list[Campaign]
 
-@app.get("/campaigns")
-async def read_campaigns():
-    return {"campaigns": data}
+@app.get("/campaigns", response_model=CapaignsResponse)
+async def read_campaigns(Session: SessionDep):
+    campaigns = Session.exec(select(Campaign)).all()
+    return {"campaigns": campaigns}
 
-@app.get("/campaigns/{id}")
-async def read_campaign(id: int):
-    for campaign in data:
-        if campaign["campaign_id"] == id:
-            return {"campaign": campaign}
+class CapaignResponse(BaseModel):
+    campaign: Campaign
+
+@app.get("/campaigns/{id}", response_model=CapaignResponse)
+async def read_campaign(id: int, Session: SessionDep):
+    campaign = Session.exec(select(Campaign).where(Campaign.campaign_id == id)).first()
+    if campaign:
+        return {"campaign": campaign}
     raise HTTPException(status_code=404, detail="Campaign not found")
 
-@app.post("/campaigns")
-async def create_campaign(campaign: dict):
-    campaign["campaign_id"] = len(data) + 1
-    campaign["due_date"] = campaign.get("due_date")
-    campaign["created_at"] = datetime.now()
-    data.append(campaign)
-    return {"campaign": campaign}
+class CapaignCreateResponse(BaseModel):
+    campaign: CampaignCreate
 
-@app.delete("/campaigns/{id}")
-async def remove_campaign(id: int):
-    for campaign in data:
-        if campaign["campaign_id"] == id:
-            data.remove(campaign)
-            return {"message": "Campaign removed"}
+@app.post("/campaigns", response_model=CapaignCreateResponse)
+async def create_campaign(campaign: CampaignCreate, Session: SessionDep):
+    new_campaign = Campaign.model_validate(campaign)
+    Session.add(new_campaign)
+    Session.commit()
+    Session.refresh(new_campaign)
+    return {"campaign": new_campaign}
+
+@app.put("/campaigns/{id}", response_model=CapaignResponse)
+async def update_campaign(id: int, campaign: CampaignCreate, Session: SessionDep):
+    existing_campaign = Session.get(Campaign, id)
+    if existing_campaign:
+        existing_campaign.name = campaign.name
+        existing_campaign.due_date = campaign.due_date
+        Session.add(existing_campaign)
+        Session.commit()
+        Session.refresh(existing_campaign)
+        return {"message": "Campaign updated", "campaign": existing_campaign}
     raise HTTPException(status_code=404, detail="Campaign not found")
 
-@app.put("/campaigns/{id}")
-async def update_campaign(id: int, body: dict):
-    for index, campaign in enumerate(data):
-        if campaign["campaign_id"] == id:
-            data[index] = {**campaign, **body}
-            return {"message": "Campaign updated"}
+@app.delete("/campaigns/{id}", status_code=204)
+async def remove_campaign(id: int, Session: SessionDep):
+    campaign = Session.get(Campaign, id)
+    if campaign:
+        Session.delete(campaign)
+        Session.commit()
+        return {"message": "Campaign removed"}
     raise HTTPException(status_code=404, detail="Campaign not found")
-
-"""
-async def create_campaign(campaign: dict):
-    campaign["campaign_id"] = len(data) + 1
-    campaign["created_at"] = datetime.now()
-    data.append(campaign)
-    return {"campaign": campaign}
-"""
