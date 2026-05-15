@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
@@ -53,10 +53,24 @@ async def root():
 class CapaignsResponse(BaseModel):
     campaigns: list[Campaign]
 
-@app.get("/campaigns", response_model=CapaignsResponse)
-async def read_campaigns(Session: SessionDep):
-    campaigns = Session.exec(select(Campaign)).all()
-    return {"campaigns": campaigns}
+class PaginationResponse(BaseModel):
+    campaigns: list[Campaign]
+    next: str | None
+    prev: str | None
+
+@app.get("/campaigns", response_model=PaginationResponse)
+async def read_campaigns(request: Request, Session: SessionDep, page: int = Query(1, ge=1), page_size: int = Query(7, ge=1)):
+    limit = 20
+    offset = (page-1) * limit
+    campaigns = Session.exec(select(Campaign).order_by(Campaign.created_at).offset(offset).limit(limit)).all()
+    base_url = str(request.url).split("?")[0]
+    next = f"{base_url}?page={page+1}&page_size={page_size}" if len(campaigns) == limit else "there is no more data"
+    prev = f"{base_url}?page={page-1}&page_size={page_size}" if page > 1 else "there is no previous data"
+    return {
+        "campaigns": campaigns,
+        "next": next,
+        "prev": prev
+    }
 
 class CapaignResponse(BaseModel):
     campaign: Campaign
