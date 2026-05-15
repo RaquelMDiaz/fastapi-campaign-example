@@ -59,17 +59,15 @@ class PaginationResponse(BaseModel):
     prev: str | None
 
 @app.get("/campaigns", response_model=PaginationResponse)
-async def read_campaigns(request: Request, Session: SessionDep, page: int = Query(1, ge=1), page_size: int = Query(7, ge=1)):
-    limit = 20
-    offset = (page-1) * limit
+async def read_campaigns(request: Request, Session: SessionDep, offset: int = Query(0, ge=0), limit: int = Query(20, ge=1)):
     campaigns = Session.exec(select(Campaign).order_by(Campaign.created_at).offset(offset).limit(limit)).all()
     base_url = str(request.url).split("?")[0]
-    next = f"{base_url}?page={page+1}&page_size={page_size}" if len(campaigns) == limit else "there is no more data"
-    prev = f"{base_url}?page={page-1}&page_size={page_size}" if page > 1 else "there is no previous data"
+    next = f"{base_url}?offset={offset + limit}&limit={limit}" if len(campaigns) == limit else "there is no more data"
+    prev = f"{base_url}?offset={max(0, offset - limit)}&limit={limit}" if offset > 0 else "there is no previous data"
     return {
         "campaigns": campaigns,
-        "next": next,
-        "prev": prev
+        "prev": prev,
+        "next": next
     }
 
 class CapaignResponse(BaseModel):
