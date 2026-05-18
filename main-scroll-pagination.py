@@ -78,8 +78,9 @@ async def read_campaigns(request: Request, Session: SessionDep, cursor: Optional
     campaigns = Session.exec(select(Campaign).order_by(Campaign.created_at).where(Campaign.campaign_id > cursor_id).limit(limit+1)).all()
     base_url = str(request.url).split("?")[0]
     next_cursor = encode_cursor(campaigns[:limit][-1].campaign_id)
+    prev_cursor = encode_cursor(max(0, cursor_id - limit))
     next_url = f"{base_url}?cursor={next_cursor}&limit={limit}" if next_cursor else "there are no more campaigns"
-    prev_url = f"{base_url}?cursor={max(0, cursor_id - limit)}&limit={limit}" if cursor_id > 0 else "there is no previous page"
+    prev_url = f"{base_url}?cursor={prev_cursor}&limit={limit}" if prev_cursor else "there is no previous page"
     return {
         "campaigns": campaigns[:limit],
         "next": next_url,
